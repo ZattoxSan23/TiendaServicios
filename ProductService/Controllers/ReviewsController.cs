@@ -2,8 +2,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ProductService.Data;
-using ProductService.Models;
 using ProductService.DTOs;
+using ProductService.Models;
 
 namespace ProductService.Controllers
 {
@@ -81,8 +81,8 @@ namespace ProductService.Controllers
                     .Where(r => r.ProductId == productId)
                     .ToListAsync();
 
-                // CORRECCIÓN: Convertir explícitamente el double a float
-                product.Rating = reviews.Count > 0 ? (float)reviews.Average(r => r.Rating) : 0.0f;
+                // ✅ SOLUCIÓN DEFINITIVA: Crear un método para calcular el promedio
+                product.Rating = CalculateAverageRating(reviews);
                 product.ReviewCount = reviews.Count;
                 product.UpdatedAt = DateTime.UtcNow;
 
@@ -97,7 +97,20 @@ namespace ProductService.Controllers
                 return StatusCode(500, new { error = "Error interno del servidor" });
             }
         }
-    }
 
-   
+        // ✅ MÉTODO AUXILIAR para calcular promedio sin error de conversión
+        private float CalculateAverageRating(List<Review> reviews)
+        {
+            if (reviews == null || reviews.Count == 0)
+                return 0.0f;
+
+            float sum = 0;
+            foreach (var review in reviews)
+            {
+                sum += review.Rating; // Review.Rating es int
+            }
+
+            return sum / reviews.Count;
+        }
+    }
 }

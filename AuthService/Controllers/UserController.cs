@@ -243,32 +243,31 @@ namespace AuthService.Controllers
         // ✅ MÉTODO PRIVADO - Dentro de la clase
         private string GenerateJwtToken(User user)
         {
-            var jwtSecret = _configuration["Jwt:Secret"]
-                ?? throw new InvalidOperationException("Jwt:Secret no encontrado");
-            var issuer = _configuration["Jwt:Issuer"] ?? "PolleriaApp";
-            var audience = _configuration["Jwt:Audience"] ?? "PolleriaUsers";
+            var jwtSecret = _configuration["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret no encontrado");
+            var issuer = _configuration["Jwt:Issuer"] ?? "AuthApp";
+            var audience = _configuration["Jwt:Audience"] ?? "AuthUsers";
 
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.UTF8.GetBytes(jwtSecret);
 
             var claims = new List<Claim>
-            {
-                new Claim("id", user.Id.ToString()),
-                new Claim(ClaimTypes.Role, user.Role),
-                new Claim("username", user.Username),
-                new Claim("firstName", user.FirstName ?? ""),
-                new Claim("lastName", user.LastName ?? ""),
-                new Claim("email", user.Email),
-                new Claim("phoneNumber", user.PhoneNumber ?? ""),
-                new Claim("address", user.Address ?? ""),
-                new Claim("birthDate", user.BirthDate?.ToString("yyyy-MM-dd") ?? ""),
-                new Claim("createdAt", user.CreatedAt.ToString("o"))
-            };
+    {
+        new Claim("id", user.Id.ToString()),
+        new Claim(ClaimTypes.Role, user.Role),
+        new Claim(JwtRegisteredClaimNames.Name, user.Username),
+        new Claim(JwtRegisteredClaimNames.Email, user.Email),
+        new Claim("firstName", user.FirstName ?? ""),
+        new Claim("lastName", user.LastName ?? ""),
+        new Claim("phoneNumber", user.PhoneNumber ?? ""),
+        new Claim("address", user.Address ?? ""),
+        new Claim("birthDate", user.BirthDate?.ToString("yyyy-MM-dd") ?? ""),
+        new Claim("createdAt", user.CreatedAt.ToString("o"))
+    };
 
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.UtcNow.AddHours(1),
+                Expires = DateTime.UtcNow.AddHours(2),
                 Issuer = issuer,
                 Audience = audience,
                 SigningCredentials = new SigningCredentials(
@@ -279,5 +278,8 @@ namespace AuthService.Controllers
             var token = tokenHandler.CreateToken(tokenDescriptor);
             return tokenHandler.WriteToken(token);
         }
+
+
+
     }
-}
+} 

@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿// Models/Product.cs
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ProductService.Models
@@ -16,16 +17,23 @@ namespace ProductService.Models
         public string Description { get; set; } = string.Empty;
 
         [Required]
-        [Column(TypeName = "decimal(18,2)")]
+        [Column(TypeName = "decimal(18, 2)")]
         public decimal Price { get; set; }
 
-        [Column(TypeName = "decimal(18,2)")]
+        [Column(TypeName = "decimal(18, 2)")]
         public decimal? DiscountPrice { get; set; }
 
         public int Stock { get; set; } = 0;
 
+        // ✅ RELACIÓN REAL CON CATEGORY (FK)
+        public int? CategoryId { get; set; }
+
+        [ForeignKey("CategoryId")]
+        public Category? Category { get; set; }
+
+        // ✅ MANTENER PARA COMPATIBILIDAD (nombre de categoría como string)
         [MaxLength(50)]
-        public string Category { get; set; } = "General";
+        public string CategoryName { get; set; } = "General";
 
         [MaxLength(50)]
         public string Brand { get; set; } = "Generic";

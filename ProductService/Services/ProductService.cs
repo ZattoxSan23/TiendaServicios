@@ -5,21 +5,6 @@ using ProductService.Models;
 
 namespace ProductService.Services
 {
-    public interface IProductService
-    {
-        Task<ProductDto?> GetProductByIdAsync(int id);
-        Task<IEnumerable<ProductDto>> GetAllProductsAsync();
-        Task<IEnumerable<ProductDto>> GetFeaturedProductsAsync(int count = 8);
-        Task<IEnumerable<ProductDto>> GetProductsByCategoryAsync(string category);
-        Task<(IEnumerable<ProductDto> Products, int TotalCount, int TotalPages)> GetProductsFilteredAsync(ProductFilterDto filter);
-        Task<ProductDto> CreateProductAsync(CreateProductDto dto);
-        Task<ProductDto?> UpdateProductAsync(int id, UpdateProductDto dto);
-        Task<bool> DeleteProductAsync(int id);
-        Task<bool> UpdateStockAsync(int id, int quantity);
-        Task<IEnumerable<string>> GetCategoriesAsync();
-        Task<IEnumerable<string>> GetBrandsAsync();
-    }
-
     public class ProductService : IProductService
     {
         private readonly ProductDbContext _context;
@@ -34,6 +19,7 @@ namespace ProductService.Services
         public async Task<ProductDto?> GetProductByIdAsync(int id)
         {
             var product = await _context.Products
+                .Include(p => p.Category)
                 .FirstOrDefaultAsync(p => p.Id == id && p.IsActive);
 
             if (product == null) return null;
@@ -44,6 +30,7 @@ namespace ProductService.Services
         public async Task<IEnumerable<ProductDto>> GetAllProductsAsync()
         {
             var products = await _context.Products
+                .Include(p => p.Category)
                 .Where(p => p.IsActive)
                 .OrderByDescending(p => p.CreatedAt)
                 .ToListAsync();
@@ -54,6 +41,7 @@ namespace ProductService.Services
         public async Task<IEnumerable<ProductDto>> GetFeaturedProductsAsync(int count = 8)
         {
             var products = await _context.Products
+                .Include(p => p.Category)
                 .Where(p => p.IsActive && p.IsFeatured)
                 .OrderByDescending(p => p.CreatedAt)
                 .Take(count)
@@ -62,10 +50,24 @@ namespace ProductService.Services
             return products.Select(MapToDto);
         }
 
+        // ✅ MANTENER: Método original con string (NO MODIFICAR)
         public async Task<IEnumerable<ProductDto>> GetProductsByCategoryAsync(string category)
         {
             var products = await _context.Products
-                .Where(p => p.IsActive && p.Category == category)
+                .Include(p => p.Category)
+                .Where(p => p.IsActive && p.CategoryName == category)
+                .OrderByDescending(p => p.CreatedAt)
+                .ToListAsync();
+
+            return products.Select(MapToDto);
+        }
+
+        // ✅ NUEVO: Método con int (nombre diferente)
+        public async Task<IEnumerable<ProductDto>> GetProductsByCategoryIdAsync(int categoryId)
+        {
+            var products = await _context.Products
+                .Include(p => p.Category)
+                .Where(p => p.IsActive && p.CategoryId == categoryId)
                 .OrderByDescending(p => p.CreatedAt)
                 .ToListAsync();
 
@@ -75,10 +77,11 @@ namespace ProductService.Services
         public async Task<(IEnumerable<ProductDto> Products, int TotalCount, int TotalPages)> GetProductsFilteredAsync(ProductFilterDto filter)
         {
             var query = _context.Products
+                .Include(p => p.Category)
                 .Where(p => p.IsActive)
                 .AsQueryable();
 
-            // Aplicar filtros
+            // Filtro de búsqueda
             if (!string.IsNullOrEmpty(filter.Search))
             {
                 query = query.Where(p =>
@@ -87,9 +90,15 @@ namespace ProductService.Services
                     p.Tags != null && p.Tags.Contains(filter.Search));
             }
 
-            if (!string.IsNullOrEmpty(filter.Category))
+            // ✅ Filtro por CategoryId (int) - prioridad alta
+            if (filter.CategoryId.HasValue)
             {
-                query = query.Where(p => p.Category == filter.Category);
+                query = query.Where(p => p.CategoryId == filter.CategoryId.Value);
+            }
+            // Filtro por Category (string) - compatibilidad
+            else if (!string.IsNullOrEmpty(filter.Category))
+            {
+                query = query.Where(p => p.CategoryName == filter.Category);
             }
 
             if (!string.IsNullOrEmpty(filter.Brand))
@@ -128,7 +137,7 @@ namespace ProductService.Services
                 "price_asc" => query.OrderBy(p => p.Price),
                 "price_desc" => query.OrderByDescending(p => p.Price),
                 "rating" => query.OrderByDescending(p => p.Rating),
-                _ => query.OrderByDescending(p => p.CreatedAt) // newest por defecto
+                _ => query.OrderByDescending(p => p.CreatedAt)
             };
 
             // Paginación
@@ -145,6 +154,18 @@ namespace ProductService.Services
 
         public async Task<ProductDto> CreateProductAsync(CreateProductDto dto)
         {
+            // Verificar que la categoría existe si se proporciona CategoryId
+            if (dto.CategoryId.HasValue)
+            {
+                var category = await _context.Categories.FindAsync(dto.CategoryId.Value);
+                if (category == null)
+                {
+                    throw new InvalidOperationException($"La categoría con ID {dto.CategoryId} no existe");
+                }
+                // Sincronizar el nombre
+                dto.CategoryName = category.Name;
+            }
+
             var product = new Product
             {
                 Name = dto.Name,
@@ -152,7 +173,8 @@ namespace ProductService.Services
                 Price = dto.Price,
                 DiscountPrice = dto.DiscountPrice,
                 Stock = dto.Stock,
-                Category = dto.Category,
+                CategoryId = dto.CategoryId,
+                CategoryName = dto.CategoryName ?? "General",
                 Brand = dto.Brand,
                 Color = dto.Color,
                 Size = dto.Size,
@@ -169,7 +191,7 @@ namespace ProductService.Services
             await _context.SaveChangesAsync();
 
             _logger.LogInformation("Product created: {ProductId} - {ProductName}", product.Id, product.Name);
-            return MapToDto(product);
+            return await GetProductByIdAsync(product.Id) ?? throw new InvalidOperationException("Error retrieving created product");
         }
 
         public async Task<ProductDto?> UpdateProductAsync(int id, UpdateProductDto dto)
@@ -177,13 +199,28 @@ namespace ProductService.Services
             var product = await _context.Products.FindAsync(id);
             if (product == null) return null;
 
-            // Actualizar solo los campos proporcionados
+            // Si cambia la categoría por ID, actualizar ambos campos
+            if (dto.CategoryId.HasValue && dto.CategoryId != product.CategoryId)
+            {
+                var category = await _context.Categories.FindAsync(dto.CategoryId.Value);
+                if (category == null)
+                {
+                    throw new InvalidOperationException($"La categoría con ID {dto.CategoryId} no existe");
+                }
+                product.CategoryId = dto.CategoryId;
+                product.CategoryName = category.Name;
+            }
+            // Si solo cambia el nombre
+            else if (!string.IsNullOrEmpty(dto.CategoryName) && dto.CategoryName != product.CategoryName)
+            {
+                product.CategoryName = dto.CategoryName;
+            }
+
             if (!string.IsNullOrEmpty(dto.Name)) product.Name = dto.Name;
             if (!string.IsNullOrEmpty(dto.Description)) product.Description = dto.Description;
             if (dto.Price.HasValue) product.Price = dto.Price.Value;
             product.DiscountPrice = dto.DiscountPrice;
             if (dto.Stock.HasValue) product.Stock = dto.Stock.Value;
-            if (!string.IsNullOrEmpty(dto.Category)) product.Category = dto.Category;
             if (!string.IsNullOrEmpty(dto.Brand)) product.Brand = dto.Brand;
             product.Color = dto.Color;
             product.Size = dto.Size;
@@ -198,7 +235,7 @@ namespace ProductService.Services
             await _context.SaveChangesAsync();
 
             _logger.LogInformation("Product updated: {ProductId}", product.Id);
-            return MapToDto(product);
+            return await GetProductByIdAsync(product.Id);
         }
 
         public async Task<bool> DeleteProductAsync(int id)
@@ -206,7 +243,6 @@ namespace ProductService.Services
             var product = await _context.Products.FindAsync(id);
             if (product == null) return false;
 
-            // Soft delete (cambiar estado)
             product.IsActive = false;
             product.UpdatedAt = DateTime.UtcNow;
 
@@ -230,11 +266,29 @@ namespace ProductService.Services
 
         public async Task<IEnumerable<string>> GetCategoriesAsync()
         {
-            return await _context.Products
-                .Where(p => p.IsActive)
-                .Select(p => p.Category)
+            return await _context.Categories
+                .Where(c => c.IsActive)
+                .Select(c => c.Name)
                 .Distinct()
                 .OrderBy(c => c)
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<CategoryDto>> GetCategoryListAsync()
+        {
+            return await _context.Categories
+                .Where(c => c.IsActive)
+                .Select(c => new CategoryDto
+                {
+                    Id = c.Id,
+                    Name = c.Name,
+                    Description = c.Description,
+                    ImageUrl = c.ImageUrl,
+                    IsActive = c.IsActive,
+                    CreatedAt = c.CreatedAt,
+                    ProductCount = c.Products.Count(p => p.IsActive)
+                })
+                .OrderBy(c => c.Name)
                 .ToListAsync();
         }
 
@@ -258,7 +312,9 @@ namespace ProductService.Services
                 Price = product.Price,
                 DiscountPrice = product.DiscountPrice,
                 Stock = product.Stock,
-                Category = product.Category,
+                CategoryId = product.CategoryId,
+                CategoryName = product.CategoryName,
+                CategoryImageUrl = product.Category?.ImageUrl,
                 Brand = product.Brand,
                 Color = product.Color,
                 Size = product.Size,

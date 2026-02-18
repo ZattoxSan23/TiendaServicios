@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿// Models/Category.cs
+using System.ComponentModel.DataAnnotations;
 
 namespace ProductService.Models
 {
@@ -21,7 +22,7 @@ namespace ProductService.Models
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-        // Relación con productos (opcional)
+        // ✅ RELACIÓN CON PRODUCTOS - CASCADE DELETE
         public ICollection<Product> Products { get; set; } = new List<Product>();
     }
 }

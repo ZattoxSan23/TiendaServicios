@@ -18,17 +18,17 @@ namespace AuthService.Services
         public AuthServiceClass(AuthDbContext context, IConfiguration configuration)
         {
             _context = context;
+            _jwtSecret = configuration["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret no encontrado");
 
-            _jwtSecret = configuration["Jwt:Secret"]
-                ?? throw new InvalidOperationException("Jwt:Secret no encontrado en appsettings.json");
+            // ✅ UNIFICADO - Siempre desde appsettings.json
+            _issuer = configuration["Jwt:Issuer"] ?? "AuthApp";
+            _audience = configuration["Jwt:Audience"] ?? "AuthUsers";
 
-            _issuer = configuration["Jwt:Issuer"] ?? "PolleriaApp";
-            _audience = configuration["Jwt:Audience"] ?? "PolleriaUsers";
+            Console.WriteLine($"🔧 AuthServiceClass → Issuer: {_issuer} | Audience: {_audience}");
         }
 
         public string Register(UserRegisterDto dto)
         {
-            // Validar y convertir BirthDate
             DateTime? birthDateParsed = null;
             if (!string.IsNullOrEmpty(dto.BirthDate))
             {
@@ -41,10 +41,8 @@ namespace AuthService.Services
                 birthDateParsed = parsedDate.Date;
             }
 
-            // Verificar duplicados
             if (_context.Users.Any(u => u.Username == dto.Username))
                 throw new InvalidOperationException("El nombre de usuario ya existe");
-
             if (_context.Users.Any(u => u.Email == dto.Email))
                 throw new InvalidOperationException("El email ya está registrado");
 
@@ -55,7 +53,7 @@ namespace AuthService.Services
                 LastName = dto.LastName,
                 Email = dto.Email,
                 Role = dto.Role ?? "Cliente",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),  // ✅ CORREGIDO
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
                 PhoneNumber = dto.PhoneNumber,
                 Address = dto.Address,
                 BirthDate = birthDateParsed,
@@ -70,30 +68,26 @@ namespace AuthService.Services
         public string? Login(LoginRequest request)
         {
             var user = _context.Users.FirstOrDefault(u => u.Username == request.Username);
-
-            if (user == null)
-            {
-                Console.WriteLine($"Usuario no encontrado: {request.Username}");
+            if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
                 return null;
-            }
 
-            if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))  // ✅ CORREGIDO
-            {
-                Console.WriteLine($"Contraseña incorrecta para: {request.Username}");
-                return null;
-            }
+            return GenerateJwtToken(user);   // ← Ahora usa el método unificado
+        }
 
+        private string GenerateJwtToken(User user)
+        {
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.UTF8.GetBytes(_jwtSecret);
 
             var claims = new List<Claim>
             {
+                new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                new Claim(JwtRegisteredClaimNames.Name, user.Username),
+                new Claim(JwtRegisteredClaimNames.Email, user.Email),
+                new Claim(ClaimTypes.Role, user.Role),           // ← CRÍTICO
                 new Claim("id", user.Id.ToString()),
-                new Claim(ClaimTypes.Role, user.Role),
-                new Claim("username", user.Username),
                 new Claim("firstName", user.FirstName ?? ""),
                 new Claim("lastName", user.LastName ?? ""),
-                new Claim("email", user.Email),
                 new Claim("phoneNumber", user.PhoneNumber ?? ""),
                 new Claim("address", user.Address ?? ""),
                 new Claim("birthDate", user.BirthDate?.ToString("yyyy-MM-dd") ?? ""),
@@ -103,7 +97,7 @@ namespace AuthService.Services
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.UtcNow.AddHours(1),
+                Expires = DateTime.UtcNow.AddHours(2),
                 Issuer = _issuer,
                 Audience = _audience,
                 SigningCredentials = new SigningCredentials(

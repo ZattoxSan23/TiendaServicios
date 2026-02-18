@@ -103,7 +103,7 @@ namespace ProductService.Controllers
         {
             try
             {
-                var categories = await _productService.GetCategoriesAsync();
+                var categories = await _productService.GetCategoryListAsync();
                 return Ok(categories);
             }
             catch (Exception ex)
@@ -129,7 +129,7 @@ namespace ProductService.Controllers
             }
         }
 
-        // GET: api/products/category/{category}
+        // ✅ MANTENER: Endpoint original con string (NO MODIFICAR)
         [HttpGet("category/{category}")]
         public async Task<IActionResult> GetByCategory(string category)
         {
@@ -141,6 +141,22 @@ namespace ProductService.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting products by category: {Category}", category);
+                return StatusCode(500, new { error = "Error interno del servidor" });
+            }
+        }
+
+        // ✅ NUEVO: Endpoint con ID (ruta diferente)
+        [HttpGet("category/id/{categoryId}")]
+        public async Task<IActionResult> GetByCategoryId(int categoryId)
+        {
+            try
+            {
+                var products = await _productService.GetProductsByCategoryIdAsync(categoryId);
+                return Ok(products);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting products by category id: {CategoryId}", categoryId);
                 return StatusCode(500, new { error = "Error interno del servidor" });
             }
         }

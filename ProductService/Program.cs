@@ -3,60 +3,85 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using ProductService.Data;
 using ProductService.Services;
+using System.Security.Claims;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Habilitar CORS para el frontend (Next.js en puerto 3000)
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.SetMinimumLevel(LogLevel.Debug);
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowNextJs", policy =>
-    {
-        policy.WithOrigins("http://localhost:3000")   // puerto de tu frontend
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();  // si usas cookies en el futuro
-    });
+    options.AddPolicy("AllowFrontend", policy => policy
+        .WithOrigins("http://localhost:3000")
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials());
 });
 
-// ────────────────────────────────────────────────
-// Servicios básicos
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// ────────────────────────────────────────────────
-// Conexión a PostgreSQL desde appsettings.json
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("No se encontró 'DefaultConnection' en appsettings.json");
+    ?? throw new InvalidOperationException("No se encontró 'DefaultConnection'");
 
-builder.Services.AddDbContext<ProductDbContext>(options =>
-    options.UseNpgsql(connectionString));
+builder.Services.AddDbContext<ProductDbContext>(options => options.UseNpgsql(connectionString));
 
-// ────────────────────────────────────────────────
-// Servicio de productos
 builder.Services.AddScoped<IProductService, ProductService.Services.ProductService>();
+builder.Services.AddScoped<ICategoryService, CategoryService>();
 
-// ────────────────────────────────────────────────
-// JWT Authentication
-var jwtSecret = builder.Configuration["Jwt:Secret"]
-    ?? throw new InvalidOperationException("Jwt:Secret no encontrado en appsettings.json");
+// ================= JWT - VERSIÓN ESTABLE (7.2.0 / 8.0.8) =================
+var jwtSecret = builder.Configuration["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret no encontrado");
+var key = Encoding.UTF8.GetBytes(jwtSecret);
+var issuer = builder.Configuration["Jwt:Issuer"] ?? "AuthApp";
+var audience = builder.Configuration["Jwt:Audience"] ?? "AuthUsers";
+
+Console.WriteLine($"🔧 ProductService JWT Config: Issuer={issuer} | Audience={audience}");
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.RequireHttpsMetadata = false;
+        options.SaveToken = true;
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
-
+            IssuerSigningKey = new SymmetricSecurityKey(key),
             ValidateIssuer = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "PolleriaApp",
-
+            ValidIssuer = issuer,
             ValidateAudience = true,
-            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "PolleriaUsers",
+            ValidAudience = audience,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero,
+            RoleClaimType = ClaimTypes.Role,
+            NameClaimType = ClaimTypes.Name
+        };
 
-            ClockSkew = TimeSpan.Zero             // Sin tolerancia de tiempo
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var header = context.Request.Headers["Authorization"].FirstOrDefault() ?? "";
+                Console.WriteLine($"🔍 [JWT] Raw Header: '{header}'");
+                return Task.CompletedTask;
+            },
+            OnAuthenticationFailed = context =>
+            {
+                Console.WriteLine($"❌ [JWT] Authentication Failed: {context.Exception.Message}");
+                if (context.Exception.InnerException != null)
+                    Console.WriteLine($"   Inner: {context.Exception.InnerException.Message}");
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = context =>
+            {
+                Console.WriteLine("✅ [JWT] TOKEN VÁLIDO");
+                Console.WriteLine($"   User: {context.Principal?.Identity?.Name} | Role: {context.Principal?.FindFirst(ClaimTypes.Role)?.Value}");
+                return Task.CompletedTask;
+            }
         };
     });
 
@@ -64,31 +89,22 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-app.UseCors("AllowNextJs");  // ← ponlo ANTES de UseAuthentication y UseAuthorization
-
-// ────────────────────────────────────────────────
-// Pipeline
+app.UseCors("AllowFrontend");
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();      // Buena práctica
-app.UseAuthentication();        // ¡IMPORTANTE! Antes de Authorization
+app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
-// Inicializar base de datos
 using (var scope = app.Services.CreateScope())
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<ProductDbContext>();
-
-    // Asegurar que la base de datos está creada
-    await dbContext.Database.EnsureCreatedAsync();
-
-  
+    var db = scope.ServiceProvider.GetRequiredService<ProductDbContext>();
+    db.Database.EnsureCreated();
 }
 
+Console.WriteLine($"🚀 ProductService iniciado en http://localhost:5174");
 app.Run();

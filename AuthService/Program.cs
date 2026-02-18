@@ -1,83 +1,95 @@
 ﻿using AuthService.Data;
 using AuthService.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ✅ LOGGING DETALLADO
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
-// Habilitar CORS para el frontend (Next.js en puerto 3000)
+// CORS
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowNextJs", policy =>
-    {
-        policy.WithOrigins("http://localhost:3000")   // puerto de tu frontend
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();  // si usas cookies en el futuro
-    });
+    options.AddPolicy("AllowFrontend",
+        policy => policy
+            .WithOrigins("http://localhost:3000")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials());
 });
 
-
-// ────────────────────────────────────────────────
-// Servicios básicos
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// ────────────────────────────────────────────────
-// Conexión a PostgreSQL desde appsettings.json
+// Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("No se encontró 'DefaultConnection' en appsettings.json");
-
+    ?? throw new InvalidOperationException("No se encontró 'DefaultConnection'");
 builder.Services.AddDbContext<AuthDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// ────────────────────────────────────────────────
 // Servicio de autenticación
 builder.Services.AddScoped<AuthServiceClass>();
 
-// ────────────────────────────────────────────────
-// JWT Authentication
+// ✅ CONFIGURACIÓN JWT - USAR EXACTAMENTE LOS MISMOS VALORES QUE EL SERVICIO
 var jwtSecret = builder.Configuration["Jwt:Secret"]
-    ?? throw new InvalidOperationException("Jwt:Secret no encontrado en appsettings.json");
+    ?? throw new InvalidOperationException("Jwt:Secret no encontrado");
+var key = Encoding.UTF8.GetBytes(jwtSecret);
 
-builder.Services.AddAuthentication("Bearer").AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
+// ✅ LEER DE APPSettings O USAR LOS MISMOS DEFAULTS HARDCODEADOS
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "AuthApp";  // ✅ MISMO DEFAULT
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "AuthUsers"; // ✅ MISMO DEFAULT
+
+Console.WriteLine($"🔧 AuthService JWT Config:");
+Console.WriteLine($"🔧   Secret length: {jwtSecret.Length}");
+Console.WriteLine($"🔧   Issuer: {jwtIssuer}");
+Console.WriteLine($"🔧   Audience: {jwtAudience}");
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
     {
-        ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
-
-        ValidateIssuer = true,                // Activar
-        ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "PolleriaApp",
-
-        ValidateAudience = true,              // Activar
-        ValidAudience = builder.Configuration["Jwt:Audience"] ?? "PolleriaUsers",
-
-        ClockSkew = TimeSpan.Zero             // Sin tolerancia de tiempo
-    };
-});
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(key),
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,  // ✅ USAR VARIABLE
+            ValidateAudience = true,
+            ValidAudience = jwtAudience, // ✅ USAR VARIABLE
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero
+        };
+    });
 
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-app.UseCors("AllowNextJs");  // ← ponlo ANTES de UseAuthentication y UseAuthorization
+// Middleware pipeline - ORDEN CRÍTICO
+app.UseCors("AllowFrontend");
 
-// ────────────────────────────────────────────────
-// Pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();      // Buena práctica
-app.UseAuthentication();        // ¡IMPORTANTE! Antes de Authorization
+// ✅ NO USAR HTTPS REDIRECTION EN DESARROLLO - CAUSA PROBLEMAS CON CORS
+// app.UseHttpsRedirection(); // ❌ COMENTADO EN DESARROLLO
+
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Verificar configuración al iniciar
+Console.WriteLine($"🚀 AuthService iniciado en http://localhost:5003");
+Console.WriteLine($"🚀 JWT Issuer configurado: {jwtIssuer}");
+Console.WriteLine($"🚀 JWT Audience configurado: {jwtAudience}");
 
 app.Run();

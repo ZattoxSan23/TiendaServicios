@@ -3,6 +3,7 @@ using AuthService.Models;
 using AuthService.Services;
 using Microsoft.AspNetCore.Mvc;
 
+
 namespace AuthService.Controllers
 {
     [Route("api/auth")]
